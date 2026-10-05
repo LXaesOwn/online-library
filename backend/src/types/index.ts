@@ -1,45 +1,40 @@
 export interface User {
   id: string;
   username: string;
-  password_hash: string;
-  created_at: string;
-  updated_at: string;
+  passwordHash: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Book {
   olid: string;
   title: string;
   authors: string[];
-  cover_edition_key?: string;
+  coverEditionKey?: string;
   description?: string;
-  cover_url?: string;
-}
-
-export interface Like {
-  id: string;
-  user_id: string;
-  book_olid: string;
-  created_at: string;
+  coverUrl?: string;
 }
 
 export interface Comment {
   id: string;
-  user_id: string;
-  book_olid: string;
+  userId: string;
+  bookOlid: string;
   content: string;
-  created_at: string;
-  updated_at: string;
+  createdAt: string;
+  updatedAt: string;
   username?: string;
 }
 
 export interface ReadingList {
   id: string;
-  user_id: string;
-  book_olid: string;
-  status: 'want_to_read' | 'reading' | 'read';
-  created_at: string;
-  updated_at: string;
+  userId: string;
+  bookOlid: string;
+  status: ReadingStatus;
+  createdAt: string;
+  updatedAt: string;
 }
+
+export type ReadingStatus = 'want_to_read' | 'reading' | 'read';
 
 export interface OpenLibrarySearchResponse {
   numFound: number;
@@ -67,5 +62,3 @@ export interface JwtPayload {
   userId: string;
   username: string;
 }
-
-export type ReadingStatus = 'want_to_read' | 'reading' | 'read';

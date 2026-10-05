@@ -7,7 +7,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(5000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
-  SUPABASE_URL: z.string().url().min(1),
+  SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
 
@@ -20,14 +20,19 @@ const envSchema = z.object({
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(60),
 
   CACHE_TTL_SECONDS: z.coerce.number().default(1800),
+  CACHE_CHECK_PERIOD_SECONDS: z.coerce.number().default(120),
+
+  LOG_LEVEL: z.string().default('info'),
+
+  CORS_ORIGIN: z.string().default('http://localhost:5173'),
 });
 
-export function getEnv() {
+function loadEnv() {
   try {
     return envSchema.parse(process.env);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      console.error('❌ Invalid environment variables:');
+      console.error('Invalid environment variables:');
       error.errors.forEach((err) => {
         console.error(`  - ${err.path.join('.')}: ${err.message}`);
       });
@@ -37,19 +42,5 @@ export function getEnv() {
   }
 }
 
-export const env = getEnv();
-
-export function checkRequiredEnv() {
-  const required = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'JWT_SECRET'];
-  const missing = required.filter((key) => !process.env[key]);
-
-  if (missing.length > 0) {
-    console.error(`❌ Missing required environment variables: ${missing.join(', ')}`);
-    console.error('Please check your .env file');
-    process.exit(1);
-  }
-
-  console.log('✅ Environment variables validated successfully');
-}
-
+export const env = loadEnv();
 export default env;

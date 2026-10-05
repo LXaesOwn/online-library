@@ -1,348 +1,166 @@
-import { supabase } from '../config/database';
-import { Comment, ReadingList, ReadingStatus } from '../types';
-import { OpenLibraryService } from './openLibrary.service';
+import * as likeRepository from '../repositories/likeRepository';
+import * as commentRepository from '../repositories/commentRepository';
+import * as readingListRepository from '../repositories/readingListRepository';
+import * as userRepository from '../repositories/userRepository';
+import { getBookDetails, getBookDetailsBatch } from './openLibrary.service';
+import type { Book, Comment, ReadingList, ReadingStatus } from '../types';
 
-export class BookInteractionService {
-  private openLibraryService = OpenLibraryService.getInstance();
+function mapComment(row: Record<string, unknown>): Comment {
+  const users = row.users as { username?: string } | null | undefined;
+  return {
+    id: row.id as string,
+    userId: row.user_id as string,
+    bookOlid: row.book_olid as string,
+    content: row.content as string,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+    username: users?.username ?? 'Unknown User',
+  };
+}
 
-  public async toggleLike(userId: string, bookOlid: string): Promise<{ liked: boolean; likeCount: number }> {
-    const { data: existingLike } = await supabase
-      .from('likes')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('book_olid', bookOlid)
-      .single();
+export async function toggleLike(userId: string, bookOlid: string): Promise<{ liked: boolean; likeCount: number }> {
+  const existing = await likeRepository.findLike(userId, bookOlid);
 
-    if (existingLike) {
-      await supabase
-        .from('likes')
-        .delete()
-        .eq('id', existingLike.id);
-    } else {
-      await supabase
-        .from('likes')
-        .insert({
-          user_id: userId,
-          book_olid: bookOlid,
-        });
-    }
+  if (existing) await likeRepository.removeById(existing.id);
+  else await likeRepository.insert(userId, bookOlid);
 
-    const { count } = await supabase
-      .from('likes')
-      .select('*', { count: 'exact', head: true })
-      .eq('book_olid', bookOlid);
+  const likeCount = await likeRepository.countByBook(bookOlid);
+  return { liked: !existing, likeCount };
+}
 
-    return {
-      liked: !existingLike,
-      likeCount: count || 0,
-    };
+export async function getLikeCount(bookOlid: string): Promise<number> {
+  return likeRepository.countByBook(bookOlid);
+}
+
+export async function getUserLikes(userId: string, page: number, limit: number) {
+  const from = (page - 1) * limit;
+  const { rows, total } = await likeRepository.listByUser(userId, from, from + limit - 1);
+  if (rows.length === 0) return { books: [] as Book[], total };
+
+  const books = await getBookDetailsBatch(rows.map((r) => r.book_olid as string));
+  return { books, total };
+}
+
+export async function checkIfLiked(userId: string, bookOlid: string): Promise<boolean> {
+  return Boolean(await likeRepository.findLike(userId, bookOlid));
+}
+
+export async function createComment(userId: string, bookOlid: string, content: string): Promise<Comment> {
+  const row = await commentRepository.insert(userId, bookOlid, content);
+  const username = await userRepository.getUsernameById(userId);
+  return { ...mapComment({ ...row, users: { username } }) };
+}
+
+export async function updateComment(commentId: string, userId: string, content: string): Promise<Comment> {
+  const existing = await commentRepository.findById(commentId);
+  if (!existing || existing.user_id !== userId) {
+    throw new Error('You can only edit your own comments');
+  }
+  const row = await commentRepository.update(commentId, content);
+  return mapComment(row as Record<string, unknown>);
+}
+
+export async function deleteComment(commentId: string, userId: string): Promise<void> {
+  const existing = await commentRepository.findById(commentId);
+  if (!existing || existing.user_id !== userId) {
+    throw new Error('You can only delete your own comments');
+  }
+  await commentRepository.remove(commentId);
+}
+
+export async function getBookComments(bookOlid: string, page: number, limit: number) {
+  const from = (page - 1) * limit;
+  const { rows, total } = await commentRepository.listByBook(bookOlid, from, from + limit - 1);
+  return { comments: rows.map((r) => mapComment(r as Record<string, unknown>)), total };
+}
+
+export async function getUserComments(userId: string, page: number, limit: number) {
+  const from = (page - 1) * limit;
+  const { rows, total } = await commentRepository.listByUser(userId, from, from + limit - 1);
+
+  const comments = await Promise.all(
+    rows.map(async (row) => {
+      const comment = mapComment(row as Record<string, unknown>);
+      const book = await getBookDetails(comment.bookOlid);
+      return { ...comment, book };
+    })
+  );
+
+  return { comments, total };
+}
+
+export async function addToReadingList(
+  userId: string,
+  bookOlid: string,
+  status: ReadingStatus
+): Promise<ReadingList> {
+  const existing = await readingListRepository.findEntry(userId, bookOlid);
+  const row = existing
+    ? await readingListRepository.updateStatus(existing.id, status)
+    : await readingListRepository.insert(userId, bookOlid, status);
+
+  return {
+    id: row.id as string,
+    userId: row.user_id as string,
+    bookOlid: row.book_olid as string,
+    status: row.status as ReadingStatus,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  };
+}
+
+export async function removeFromReadingList(userId: string, bookOlid: string): Promise<void> {
+  await readingListRepository.remove(userId, bookOlid);
+}
+
+export async function getReadingList(
+  userId: string,
+  status: ReadingStatus | undefined,
+  page: number,
+  limit: number
+) {
+  const from = (page - 1) * limit;
+  const { rows, total } = await readingListRepository.listByUser(userId, status, from, from + limit - 1);
+  if (rows.length === 0) return { books: [], total };
+
+  const books = await getBookDetailsBatch(rows.map((r) => r.book_olid as string));
+  const booksWithStatus = rows.map((item) => {
+    const book = books.find((b) => b.olid === item.book_olid);
+    return { ...book, status: item.status, readingListId: item.id };
+  });
+
+  return { books: booksWithStatus, total };
+}
+
+export async function getReadingListStatus(userId: string, bookOlid: string): Promise<string | null> {
+  return readingListRepository.getStatus(userId, bookOlid);
+}
+
+export async function searchMyBooks(
+  userId: string,
+  query: string,
+  category: 'likes' | 'reading' | 'both',
+  page: number,
+  limit: number
+) {
+  const from = (page - 1) * limit;
+  const olids = new Set<string>();
+
+  if (category === 'likes' || category === 'both') {
+    (await likeRepository.listOlidsByUser(userId)).forEach((id) => olids.add(id));
+  }
+  if (category === 'reading' || category === 'both') {
+    (await readingListRepository.listOlidsByUser(userId)).forEach((id) => olids.add(id));
   }
 
-  public async getLikeCount(bookOlid: string): Promise<number> {
-    const { count } = await supabase
-      .from('likes')
-      .select('*', { count: 'exact', head: true })
-      .eq('book_olid', bookOlid);
-    return count || 0;
-  }
+  if (olids.size === 0) return { books: [], total: 0 };
 
-  public async getUserLikes(userId: string, page: number = 1, limit: number = 20): Promise<{ books: any[]; total: number }> {
-    const offset = (page - 1) * limit;
-
-    const { data: likes, count } = await supabase
-      .from('likes')
-      .select('book_olid', { count: 'exact' })
-      .eq('user_id', userId)
-      .range(offset, offset + limit - 1);
-
-    if (!likes || likes.length === 0) {
-      return { books: [], total: 0 };
-    }
-
-    const olids = likes.map((l) => l.book_olid);
-    const books = await this.openLibraryService.getBookDetailsBatch(olids);
-
-    return { books, total: count || 0 };
-  }
-
-  public async checkIfLiked(userId: string, bookOlid: string): Promise<boolean> {
-    const { data } = await supabase
-      .from('likes')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('book_olid', bookOlid)
-      .single();
-    return !!data;
-  }
-
-  public async createComment(userId: string, bookOlid: string, content: string): Promise<Comment> {
-    const { data: comment, error } = await supabase
-      .from('comments')
-      .insert({
-        user_id: userId,
-        book_olid: bookOlid,
-        content,
-      })
-      .select()
-      .single();
-
-    if (error || !comment) {
-      throw new Error('Failed to create comment');
-    }
-
-    const { data: user } = await supabase
-      .from('users')
-      .select('username')
-      .eq('id', userId)
-      .single();
-
-    return {
-      ...comment,
-      username: user?.username,
-    };
-  }
-
-  public async updateComment(commentId: string, userId: string, content: string): Promise<Comment> {
-    const { data: existingComment } = await supabase
-      .from('comments')
-      .select('user_id')
-      .eq('id', commentId)
-      .single();
-
-    if (!existingComment || existingComment.user_id !== userId) {
-      throw new Error('You can only edit your own comments');
-    }
-
-    const { data: comment, error } = await supabase
-      .from('comments')
-      .update({ content })
-      .eq('id', commentId)
-      .select()
-      .single();
-
-    if (error || !comment) {
-      throw new Error('Failed to update comment');
-    }
-
-    return comment;
-  }
-
-  public async deleteComment(commentId: string, userId: string): Promise<void> {
-    const { data: existingComment } = await supabase
-      .from('comments')
-      .select('user_id')
-      .eq('id', commentId)
-      .single();
-
-    if (!existingComment || existingComment.user_id !== userId) {
-      throw new Error('You can only delete your own comments');
-    }
-
-    const { error } = await supabase
-      .from('comments')
-      .delete()
-      .eq('id', commentId);
-
-    if (error) {
-      throw new Error('Failed to delete comment');
-    }
-  }
-
-  public async getBookComments(bookOlid: string, page: number = 1, limit: number = 20): Promise<{ comments: Comment[]; total: number }> {
-    const offset = (page - 1) * limit;
-
-    const { data: comments, count } = await supabase
-      .from('comments')
-      .select('*, users(username)', { count: 'exact' })
-      .eq('book_olid', bookOlid)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    if (!comments) {
-      return { comments: [], total: 0 };
-    }
-
-    const formattedComments: Comment[] = comments.map((c) => ({
-      ...c,
-      username: c.users?.username || 'Unknown User',
-    }));
-
-    return { comments: formattedComments, total: count || 0 };
-  }
-
-  public async getUserComments(userId: string, page: number = 1, limit: number = 20): Promise<{ comments: any[]; total: number }> {
-    const offset = (page - 1) * limit;
-
-    const { data: comments, count } = await supabase
-      .from('comments')
-      .select('*, users(username)', { count: 'exact' })
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    if (!comments) {
-      return { comments: [], total: 0 };
-    }
-
-    const commentsWithBooks = await Promise.all(
-      comments.map(async (c) => {
-        const book = await this.openLibraryService.getBookDetails(c.book_olid);
-        return {
-          ...c,
-          username: c.users?.username || 'Unknown User',
-          book,
-        };
-      })
-    );
-
-    return { comments: commentsWithBooks, total: count || 0 };
-  }
-
-  public async addToReadingList(userId: string, bookOlid: string, status: ReadingStatus): Promise<ReadingList> {
-    const { data: existing } = await supabase
-      .from('reading_list')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('book_olid', bookOlid)
-      .single();
-
-    if (existing) {
-      const { data: item, error } = await supabase
-        .from('reading_list')
-        .update({ status })
-        .eq('id', existing.id)
-        .select()
-        .single();
-
-      if (error || !item) {
-        throw new Error('Failed to update reading list');
-      }
-      return item;
-    } else {
-      const { data: item, error } = await supabase
-        .from('reading_list')
-        .insert({
-          user_id: userId,
-          book_olid: bookOlid,
-          status,
-        })
-        .select()
-        .single();
-
-      if (error || !item) {
-        throw new Error('Failed to add to reading list');
-      }
-      return item;
-    }
-  }
-
-  public async removeFromReadingList(userId: string, bookOlid: string): Promise<void> {
-    const { error } = await supabase
-      .from('reading_list')
-      .delete()
-      .eq('user_id', userId)
-      .eq('book_olid', bookOlid);
-
-    if (error) {
-      throw new Error('Failed to remove from reading list');
-    }
-  }
-
-  public async getReadingList(
-    userId: string,
-    status?: ReadingStatus,
-    page: number = 1,
-    limit: number = 20
-  ): Promise<{ books: any[]; total: number }> {
-    const offset = (page - 1) * limit;
-
-    let query = supabase
-      .from('reading_list')
-      .select('*', { count: 'exact' })
-      .eq('user_id', userId);
-
-    if (status) {
-      query = query.eq('status', status);
-    }
-
-    const { data: items, count } = await query
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    if (!items || items.length === 0) {
-      return { books: [], total: 0 };
-    }
-
-    const olids = items.map((i) => i.book_olid);
-    const books = await this.openLibraryService.getBookDetailsBatch(olids);
-
-    const booksWithStatus = items.map((item) => {
-      const book = books.find((b) => b.olid === item.book_olid);
-      return {
-        ...book,
-        status: item.status,
-        reading_list_id: item.id,
-      };
-    });
-
-    return { books: booksWithStatus, total: count || 0 };
-  }
-
-  public async getReadingListStatus(userId: string, bookOlid: string): Promise<string | null> {
-    const { data: item } = await supabase
-      .from('reading_list')
-      .select('status')
-      .eq('user_id', userId)
-      .eq('book_olid', bookOlid)
-      .single();
-    return item?.status || null;
-  }
-
-  public async searchMyBooks(
-    userId: string,
-    query: string,
-    category: 'likes' | 'reading' | 'both',
-    page: number = 1,
-    limit: number = 20
-  ): Promise<{ books: any[]; total: number }> {
-    const offset = (page - 1) * limit;
-    let olids: string[] = [];
-
-    if (category === 'likes' || category === 'both') {
-      const { data: likes } = await supabase
-        .from('likes')
-        .select('book_olid')
-        .eq('user_id', userId);
-      if (likes) {
-        olids.push(...likes.map((l) => l.book_olid));
-      }
-    }
-
-    if (category === 'reading' || category === 'both') {
-      const { data: reading } = await supabase
-        .from('reading_list')
-        .select('book_olid')
-        .eq('user_id', userId);
-      if (reading) {
-        olids.push(...reading.map((r) => r.book_olid));
-      }
-    }
-
-    olids = [...new Set(olids)];
-
-    if (olids.length === 0) {
-      return { books: [], total: 0 };
-    }
-
-    const books = await this.openLibraryService.getBookDetailsBatch(olids);
-    
-    const filteredBooks = books.filter((book) =>
+  const books = await getBookDetailsBatch([...olids]);
+  const filtered = books.filter(
+    (book) =>
       book.title.toLowerCase().includes(query.toLowerCase()) ||
       book.authors.some((author) => author.toLowerCase().includes(query.toLowerCase()))
-    );
+  );
 
-    const paginatedBooks = filteredBooks.slice(offset, offset + limit);
-
-    return { books: paginatedBooks, total: filteredBooks.length };
-  }
+  return { books: filtered.slice(from, from + limit), total: filtered.length };
 }

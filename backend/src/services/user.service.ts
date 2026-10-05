@@ -1,162 +1,80 @@
-import { supabase } from '../config/database';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { User, JwtPayload } from '../types';
+import type { SignOptions } from 'jsonwebtoken';
+import env from '../config/env';
+import { AUTH } from '../config/constants';
+import { logger } from '../config/logger';
+import * as userRepository from '../repositories/userRepository';
+import type { JwtPayload, User } from '../types';
+
+function generateToken(userId: string, username: string): string {
+  const payload: JwtPayload = { userId, username };
+  const options: SignOptions = {
+    expiresIn: env.JWT_EXPIRES_IN as SignOptions['expiresIn'],
+  };
+  return jwt.sign(payload, env.JWT_SECRET, options);
+}
+
+function toUser(row: userRepository.UserRow): User {
+  return {
+    id: row.id,
+    username: row.username,
+    passwordHash: row.password_hash,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
 
 export class UserService {
   public static async register(username: string, password: string): Promise<{ user: User; token: string }> {
-    console.log('📝 Register attempt:', { username });
-    
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select('id')
-      .eq('username', username)
-      .single();
+    logger.debug({ username }, 'register attempt');
 
-    if (existingUser) {
-      console.log('❌ Username already taken:', username);
-      throw new Error('Username already taken');
-    }
+    const existing = await userRepository.findByUsername(username);
+    if (existing) throw new Error('Username already taken');
 
-    const saltRounds = 10;
-    const passwordHash = await bcrypt.hash(password, saltRounds);
+    const passwordHash = await bcrypt.hash(password, AUTH.SALT_ROUNDS);
+    const row = await userRepository.insert(username, passwordHash);
+    const token = generateToken(row.id, row.username);
 
-    console.log('🔐 Creating user with:', { username, passwordHash: passwordHash.substring(0, 20) + '...' });
-
-    const { data: user, error } = await supabase
-      .from('users')
-      .insert({
-        username,
-        password_hash: passwordHash,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('❌ Supabase error:', error);
-      throw new Error(`Failed to create user: ${error.message}`);
-    }
-
-    if (!user) {
-      console.error('❌ No user returned from Supabase');
-      throw new Error('Failed to create user: No data returned');
-    }
-
-    console.log('✅ User created successfully:', { id: user.id, username: user.username });
-
-    const token = UserService.generateToken(user.id, user.username);
-
-    return { user, token };
+    logger.info({ userId: row.id, username }, 'user registered');
+    return { user: toUser(row), token };
   }
 
   public static async login(username: string, password: string): Promise<{ user: User; token: string }> {
-    console.log('🔑 Login attempt:', { username });
+    logger.debug({ username }, 'login attempt');
 
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('username', username)
-      .single();
+    const row = await userRepository.findByUsernameFull(username);
+    if (!row) throw new Error('Invalid credentials');
 
-    if (error || !user) {
-      console.log('❌ User not found:', username);
-      throw new Error('Invalid credentials');
-    }
+    const valid = await bcrypt.compare(password, row.password_hash);
+    if (!valid) throw new Error('Invalid credentials');
 
-    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-    if (!isPasswordValid) {
-      console.log('❌ Invalid password for:', username);
-      throw new Error('Invalid credentials');
-    }
-
-    console.log('✅ Login successful:', { id: user.id, username: user.username });
-
-    const token = UserService.generateToken(user.id, user.username);
-
-    return { user, token };
+    const token = generateToken(row.id, row.username);
+    logger.info({ userId: row.id }, 'login successful');
+    return { user: toUser(row), token };
   }
 
   public static async getUserById(userId: string): Promise<User | null> {
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .single();
-
-    if (error || !user) {
-      return null;
-    }
-
-    return user;
+    const row = await userRepository.findById(userId);
+    return row ? toUser(row) : null;
   }
 
   public static async updateUsername(userId: string, newUsername: string): Promise<User> {
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select('id')
-      .eq('username', newUsername)
-      .neq('id', userId)
-      .single();
+    const existing = await userRepository.findIdByUsernameExcluding(newUsername, userId);
+    if (existing) throw new Error('Username already taken');
 
-    if (existingUser) {
-      throw new Error('Username already taken');
-    }
-
-    const { data: user, error } = await supabase
-      .from('users')
-      .update({ username: newUsername })
-      .eq('id', userId)
-      .select()
-      .single();
-
-    if (error || !user) {
-      throw new Error('Failed to update username');
-    }
-
-    return user;
+    const row = await userRepository.updateUsername(userId, newUsername);
+    return toUser(row);
   }
 
   public static async updatePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('password_hash')
-      .eq('id', userId)
-      .single();
+    const row = await userRepository.findById(userId);
+    if (!row) throw new Error('User not found');
 
-    if (error || !user) {
-      throw new Error('User not found');
-    }
+    const valid = await bcrypt.compare(currentPassword, row.password_hash);
+    if (!valid) throw new Error('Current password is incorrect');
 
-    const isPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
-    if (!isPasswordValid) {
-      throw new Error('Current password is incorrect');
-    }
-
-    const saltRounds = 10;
-    const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
-
-    const { error: updateError } = await supabase
-      .from('users')
-      .update({ password_hash: newPasswordHash })
-      .eq('id', userId);
-
-    if (updateError) {
-      throw new Error('Failed to update password');
-    }
-  }
-
-  private static generateToken(userId: string, username: string): string {
-    const payload: JwtPayload = { userId, username };
-    const secret = process.env.JWT_SECRET;
-    
-    if (!secret) {
-      throw new Error('JWT_SECRET is not defined in environment variables');
-    }
-
-    const options = {
-      expiresIn: process.env.JWT_EXPIRES_IN || '7d'
-    };
-
-    return jwt.sign(payload, secret, options as any);
+    const newHash = await bcrypt.hash(newPassword, AUTH.SALT_ROUNDS);
+    await userRepository.updatePassword(userId, newHash);
   }
 }

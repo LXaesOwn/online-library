@@ -1,34 +1,40 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 import env from './env';
-import { DATABASE } from './constants';
-import './dns'; 
+import { logger } from './logger';
 
-const supabaseUrl = env.SUPABASE_URL;
-const supabaseServiceKey = env.SUPABASE_SERVICE_ROLE_KEY;
+const TIMEOUT_MS = 15000;
+const MAX_ATTEMPTS = 3;
 
-console.log('🔗 Connecting to Supabase:', supabaseUrl);
-console.log('🔑 Using service role key');
+async function resilientFetch(
+  ...args: Parameters<typeof fetch>
+): Promise<Response> {
+  const [input, init] = args;
+  let lastError: unknown;
 
-export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseServiceKey, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-  },
-});
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-(async () => {
-  try {
-    const { error } = await supabase
-      .from(DATABASE.TABLES.USERS)
-      .select('count', { count: 'exact', head: true });
-    
-    if (error) {
-      console.error('❌ Supabase connection test failed:', error.message);
-      console.error('   Please check your credentials and that the table "users" exists.');
-    } else {
-      console.log('✅ Supabase connected successfully');
+    try {
+      const response = await fetch(input, { ...init, signal: controller.signal });
+      clearTimeout(timer);
+      return response;
+    } catch (error) {
+      clearTimeout(timer);
+      lastError = error;
+      logger.warn({ attempt, error }, 'supabase fetch attempt failed');
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+      }
     }
-  } catch (err) {
-    console.error('❌ Supabase connection error:', err);
   }
-})();
+
+  throw lastError;
+}
+
+logger.debug({ supabaseHost: new URL(env.SUPABASE_URL).host }, 'supabase client created');
+
+export const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { fetch: resilientFetch as typeof fetch },
+});

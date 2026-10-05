@@ -1,35 +1,31 @@
 import rateLimit from 'express-rate-limit';
+import env from './env';
 import { OPEN_LIBRARY } from './constants';
 
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+
 export const globalRateLimiter = rateLimit({
-  windowMs: OPEN_LIBRARY.RATE_LIMIT.WINDOW_MS,
-  max: OPEN_LIBRARY.RATE_LIMIT.MAX_REQUESTS,
-  message: {
-    error: 'Too many requests, please try again later.',
-    timestamp: new Date().toISOString(),
-  },
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  max: env.RATE_LIMIT_MAX_REQUESTS,
+  message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 export const strictRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 минут
-  max: 10, // 10 запросов
-  message: {
-    error: 'Too many requests. Please slow down.',
-    timestamp: new Date().toISOString(),
-  },
+  windowMs: FIFTEEN_MINUTES_MS,
+  max: 10,
+  message: { error: 'Too many requests. Please slow down.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 export const authRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 минут
-  max: 5, // 5 попыток
-  message: {
-    error: 'Too many authentication attempts. Please try again later.',
-    timestamp: new Date().toISOString(),
-  },
+  windowMs: FIFTEEN_MINUTES_MS,
+  max: 5,
+  message: { error: 'Too many authentication attempts. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+void OPEN_LIBRARY;

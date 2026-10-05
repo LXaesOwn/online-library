@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { AuthController } from '../controllers/auth.controller';
 import { BookController } from '../controllers/book.controller';
 import { InteractionController } from '../controllers/interaction.controller';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, optionalAuthMiddleware } from '../middleware/auth';
 
 const router = Router();
 
@@ -13,7 +13,7 @@ router.put('/auth/username', authMiddleware, AuthController.updateUsername);
 router.put('/auth/password', authMiddleware, AuthController.updatePassword);
 
 router.get('/books/search', BookController.search);
-router.get('/books/:olid', BookController.getDetails);
+router.get('/books/:olid', optionalAuthMiddleware, BookController.getDetails);
 
 router.post('/books/:olid/like', authMiddleware, InteractionController.toggleLike);
 router.get('/user/likes', authMiddleware, InteractionController.getLikes);

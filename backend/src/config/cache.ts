@@ -1,8 +1,9 @@
 import NodeCache from 'node-cache';
+import env from './env';
 
 export const cache = new NodeCache({
-  stdTTL: parseInt(process.env.CACHE_TTL_SECONDS || '1800'),
-  checkperiod: 120,
+  stdTTL: env.CACHE_TTL_SECONDS,
+  checkperiod: env.CACHE_CHECK_PERIOD_SECONDS,
   useClones: false,
 });
 
@@ -11,12 +12,12 @@ export const CACHE_KEYS = {
   OPEN_LIBRARY_WORK: 'ol_work',
 } as const;
 
-export function getCacheKey(prefix: string, params: Record<string, any>): string {
+export function getCacheKey(prefix: string, params: Record<string, unknown>): string {
   const sortedParams = Object.keys(params)
     .sort()
-    .reduce((acc, key) => {
+    .reduce<Record<string, unknown>>((acc, key) => {
       acc[key] = params[key];
       return acc;
-    }, {} as Record<string, any>);
+    }, {});
   return `${prefix}:${JSON.stringify(sortedParams)}`;
 }

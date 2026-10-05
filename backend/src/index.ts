@@ -1,27 +1,28 @@
+import './config/dns';
 import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
 import dotenv from 'dotenv';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './config/swagger';
 import router from './routes';
+import { securityHeaders } from './middleware/securityHeaders';
 import { globalRateLimiter } from './config/rateLimit';
+import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import env from './config/env';
 import { APP, API } from './config/constants';
+import { logger } from './config/logger';
 
 dotenv.config();
 
 const app = express();
-const port = env.PORT;
 
-app.use(helmet());
-app.use(cors());
+app.use(securityHeaders());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
 app.use(globalRateLimiter);
 
-app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+if (env.NODE_ENV !== 'production') {
+  app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+}
 
 app.use(API.PREFIX, router);
 
@@ -35,27 +36,16 @@ app.get('/health', (_req, res) => {
   });
 });
 
-app.use((_req, res) => {
-  res.status(404).json({
-    error: 'Route not found',
-    timestamp: new Date().toISOString(),
-  });
-});
+app.use(notFoundHandler);
+app.use(errorHandler);
 
-// Error handler - используем для неиспользуемых параметров
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error('❌ Unhandled error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.listen(port, () => {
-  console.log(`🚀 ${APP.NAME} v${APP.VERSION}`);
-  console.log(`📍 Server running on http://localhost:${port}`);
-  console.log(`📚 API Documentation: http://localhost:${port}/api/docs`);
-  console.log(`💚 Health check: http://localhost:${port}/health`);
-  console.log(`🌍 Environment: ${env.NODE_ENV}`);
+app.listen(env.PORT, () => {
+  logger.info(
+    {
+      port: env.PORT,
+      env: env.NODE_ENV,
+      docs: env.NODE_ENV !== 'production' ? `http://localhost:${env.PORT}/api/docs` : undefined,
+    },
+    'server started'
+  );
 });

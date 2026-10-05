@@ -8,28 +8,15 @@ const options = {
       version: '1.0.0',
       description: 'API for Online Library application',
     },
-    servers: [
-      {
-        url: 'http://localhost:5000/api',
-        description: 'Development server',
-      },
-    ],
+    servers: [{ url: 'http://localhost:5000/api', description: 'Development server' }],
     components: {
       securitySchemes: {
-        bearerAuth: {
-          type: 'http',
-          scheme: 'bearer',
-          bearerFormat: 'JWT',
-        },
+        bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
       },
     },
-    security: [
-      {
-        bearerAuth: [],
-      },
-    ],
+    security: [{ bearerAuth: [] }],
   },
-  apis: ['**/*.ts'],
+  apis: [],
 };
 
 export const swaggerSpec = swaggerJsdoc(options);

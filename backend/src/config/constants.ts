@@ -23,6 +23,9 @@ export const DATABASE = {
 
 export const OPEN_LIBRARY = {
   BASE_URL: 'https://openlibrary.org',
+  DEFAULT_LIMIT: 20,
+  MAX_LIMIT: 50,
+  TIMEOUT_MS: 10000,
   RATE_LIMIT: {
     DELAY_MS: 1000,
     MAX_REQUESTS: 60,
@@ -40,15 +43,4 @@ export const HTTP = {
     NOT_FOUND: 404,
     INTERNAL_SERVER_ERROR: 500,
   },
-  MESSAGES: {
-    SUCCESS: 'Success',
-    CREATED: 'Resource created successfully',
-    UPDATED: 'Resource updated successfully',
-    DELETED: 'Resource deleted successfully',
-    NOT_FOUND: 'Resource not found',
-    UNAUTHORIZED: 'Unauthorized',
-    FORBIDDEN: 'Forbidden',
-    INTERNAL_ERROR: 'Internal server error',
-    BAD_REQUEST: 'Bad request',
-  },
-};
+} as const;
